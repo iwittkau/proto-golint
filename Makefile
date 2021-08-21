@@ -9,6 +9,8 @@ protoc:
 
 .PHONY: install
 install: plugin.so
+	@cp plugin.so ${GOPATH}/bin/proto-golint-plugin.so
+	@ls ${GOPATH}/bin/proto-golint-plugin.so
 	go install ./cmd/proto-golint
 	@echo "installed in $(shell which proto-golint)"
 
