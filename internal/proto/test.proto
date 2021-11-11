@@ -17,6 +17,7 @@ message Test {
 
 message Embedded {
   string s = 1;
+  Embedded embedded = 2;
 }
 
 service Testing { rpc call(Test) returns (Test); }

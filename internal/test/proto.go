@@ -33,7 +33,14 @@ func somefunc(t *pb.Test) interface{} {
 		t.U64,
 		t.Embedded,
 		t.Embedded.S,
+		t.Embedded.Embedded.S,
+		t.Embedded.Embedded.Embedded.S,
 		t.GetEmbedded().S,
+		t.GetEmbedded().Embedded.S,
+		t.GetEmbedded().Embedded.Embedded.S,
+		t.GetEmbedded().GetEmbedded().S,
+		t.GetEmbedded().GetEmbedded().Embedded.S,
+		t.GetEmbedded().GetEmbedded().GetEmbedded().S,
 	)
 	return t.B
 }

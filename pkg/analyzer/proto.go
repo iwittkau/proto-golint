@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"reflect"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -30,6 +31,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		ignores = map[token.Pos]struct{}{}
 	)
 
+	var lastPos token.Pos
 	spector.Preorder(nodeFilter, func(n ast.Node) {
 		if assign, ok := n.(*ast.AssignStmt); ok {
 			for _, lhs := range assign.Lhs {
@@ -48,60 +50,35 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			return
 		}
 
-		makeReport(pass, be)
-	})
-	return nil, nil
-}
-
-func makeReport(pass *analysis.Pass, be *ast.SelectorExpr) {
-
-	/*
-		x, ok := be.X.(*ast.Ident)
-		if ok {
-			oldPrefix = x.Name
-			newPrefix = x.Name
+		oldExpr, newExpr, tok := makeExpr(be)
+		if oldExpr == "" || newExpr == "" {
+			return
 		}
 
-		be2 := be
-		for {
-			be2, ok = be2.X.(*ast.SelectorExpr)
-			if ok {
-				if oldPrefix == "" {
-					oldPrefix = fmt.Sprint(be2.X)
-					newPrefix = fmt.Sprint(be2.X)
-				}
-
-				oldPrefix = fmt.Sprintf("%s.%s", oldPrefix, be2.Sel.Name)
-				newPrefix = fmt.Sprintf("%s.Get%s()", newPrefix, be2.Sel.Name)
-				continue
-			}
-
-			break
+		if lastPos == tok.Pos() {
+			return
 		}
-	*/
+		lastPos = tok.Pos()
 
-	oldExpr, newExpr, tok := makeExpr(be)
-	if oldExpr == "" || newExpr == "" {
-		return
-	}
-
-	pass.Report(analysis.Diagnostic{
-		Pos:     tok.Pos(),
-		End:     tok.End(),
-		Message: fmt.Sprintf(`proto message field read without getter: %s should be %s`, oldExpr, newExpr),
-		SuggestedFixes: []analysis.SuggestedFix{
-			{
-				Message: fmt.Sprintf("should replace `%s` with `%s`", oldExpr, newExpr),
-				TextEdits: []analysis.TextEdit{
-					{
-						Pos:     tok.Pos(),
-						End:     tok.End(),
-						NewText: []byte(newExpr),
+		pass.Report(analysis.Diagnostic{
+			Pos:     tok.Pos(),
+			End:     tok.End(),
+			Message: fmt.Sprintf(`proto message field read without getter: %s should be %s`, oldExpr, newExpr),
+			SuggestedFixes: []analysis.SuggestedFix{
+				{
+					Message: fmt.Sprintf("should replace `%s` with `%s`", oldExpr, newExpr),
+					TextEdits: []analysis.TextEdit{
+						{
+							Pos:     tok.Pos(),
+							End:     tok.End(),
+							NewText: []byte(newExpr),
+						},
 					},
 				},
 			},
-		},
+		})
 	})
+	return nil, nil
 }
 
 func makeExpr(expr *ast.SelectorExpr) (string, string, ast.Node) {
@@ -135,6 +112,18 @@ loop:
 				break loop
 			}
 			expr = vv
+
+		case *ast.CallExpr:
+			v, ok := x.Fun.(*ast.SelectorExpr)
+			if ok {
+				oldExpr, newExpr, _ = makeExpr(v)
+				oldExpr = strings.ReplaceAll(oldExpr, "GetGet", "Get")
+				newExpr = strings.ReplaceAll(newExpr, "GetGet", "Get")
+			}
+
+			oldExpr = fmt.Sprintf("%s.%s", oldExpr, expr.Sel.Name)
+			newExpr = fmt.Sprintf("%s.Get%s()", newExpr, expr.Sel.Name)
+			break loop
 
 		default:
 			fmt.Printf("Not implemented for type: %s\n", reflect.TypeOf(x))
