@@ -50,27 +50,23 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			return
 		}
 
-		oldExpr, newExpr, tok := makeExpr(be)
-		if oldExpr == "" || newExpr == "" {
+		oldExpr, newExpr, pos, end := makeExpr(be)
+		if oldExpr == "" || newExpr == "" || lastPos == pos {
 			return
 		}
-
-		if lastPos == tok.Pos() {
-			return
-		}
-		lastPos = tok.Pos()
+		lastPos = pos
 
 		pass.Report(analysis.Diagnostic{
-			Pos:     tok.Pos(),
-			End:     tok.End(),
-			Message: fmt.Sprintf(`proto message field read without getter: %s should be %s`, oldExpr, newExpr),
+			Pos:     pos,
+			End:     end,
+			Message: fmt.Sprintf(`proto message field read without getter: %q should be %q`, oldExpr, newExpr),
 			SuggestedFixes: []analysis.SuggestedFix{
 				{
-					Message: fmt.Sprintf("should replace `%s` with `%s`", oldExpr, newExpr),
+					Message: fmt.Sprintf("should replace %q with %q", oldExpr, newExpr),
 					TextEdits: []analysis.TextEdit{
 						{
-							Pos:     tok.Pos(),
-							End:     tok.End(),
+							Pos:     pos,
+							End:     end,
 							NewText: []byte(newExpr),
 						},
 					},
@@ -81,11 +77,14 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-func makeExpr(expr *ast.SelectorExpr) (string, string, ast.Node) {
-	var oldExpr, newExpr string
+func makeExpr(expr *ast.SelectorExpr) (oldExpr, newExpr string, pos, end token.Pos) {
+	pos = expr.Pos()
+	end = expr.End()
 
 loop:
 	for {
+		var end2 token.Pos
+
 		switch x := expr.X.(type) {
 		case *ast.Ident:
 			if oldExpr != "" {
@@ -97,7 +96,10 @@ loop:
 			break loop
 
 		case *ast.SelectorExpr:
-			oldExpr, newExpr, _ = makeExpr(x)
+			oldExpr, newExpr, _, end2 = makeExpr(x)
+			if end2 > end {
+				end = end2
+			}
 
 			if oldExpr == "" {
 				oldExpr = fmt.Sprint(x)
@@ -116,7 +118,11 @@ loop:
 		case *ast.CallExpr:
 			v, ok := x.Fun.(*ast.SelectorExpr)
 			if ok {
-				oldExpr, newExpr, _ = makeExpr(v)
+				oldExpr, newExpr, _, end2 = makeExpr(v)
+				if end2 > end {
+					end = end2
+				}
+
 				oldExpr = strings.ReplaceAll(oldExpr, "GetGet", "Get")
 				newExpr = strings.ReplaceAll(newExpr, "GetGet", "Get")
 			}
@@ -131,7 +137,7 @@ loop:
 		}
 	}
 
-	return oldExpr, newExpr, expr
+	return oldExpr, newExpr, pos, end
 }
 
 const messageState = "google.golang.org/protobuf/internal/impl.MessageState"
