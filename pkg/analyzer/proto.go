@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"reflect"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -47,26 +48,101 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			return
 		}
 
-		oldExpr := fmt.Sprintf("%s.%s", be.X, be.Sel.Name)
-		newExpr := fmt.Sprintf("%s.Get%s()", be.X, be.Sel.Name)
-		pass.Report(analysis.Diagnostic{
-			Pos:     be.Pos(),
-			Message: fmt.Sprintf(`proto message field read without getter: %s.%s`, be.X, be.Sel.Name),
-			SuggestedFixes: []analysis.SuggestedFix{
-				{
-					Message: fmt.Sprintf("should replace `%s` with `%s`", oldExpr, newExpr),
-					TextEdits: []analysis.TextEdit{
-						{
-							Pos:     be.Pos(),
-							End:     be.End(),
-							NewText: []byte(newExpr),
-						},
+		makeReport(pass, be)
+	})
+	return nil, nil
+}
+
+func makeReport(pass *analysis.Pass, be *ast.SelectorExpr) {
+
+	/*
+		x, ok := be.X.(*ast.Ident)
+		if ok {
+			oldPrefix = x.Name
+			newPrefix = x.Name
+		}
+
+		be2 := be
+		for {
+			be2, ok = be2.X.(*ast.SelectorExpr)
+			if ok {
+				if oldPrefix == "" {
+					oldPrefix = fmt.Sprint(be2.X)
+					newPrefix = fmt.Sprint(be2.X)
+				}
+
+				oldPrefix = fmt.Sprintf("%s.%s", oldPrefix, be2.Sel.Name)
+				newPrefix = fmt.Sprintf("%s.Get%s()", newPrefix, be2.Sel.Name)
+				continue
+			}
+
+			break
+		}
+	*/
+
+	oldExpr, newExpr, tok := makeExpr(be)
+	if oldExpr == "" || newExpr == "" {
+		return
+	}
+
+	pass.Report(analysis.Diagnostic{
+		Pos:     tok.Pos(),
+		End:     tok.End(),
+		Message: fmt.Sprintf(`proto message field read without getter: %s should be %s`, oldExpr, newExpr),
+		SuggestedFixes: []analysis.SuggestedFix{
+			{
+				Message: fmt.Sprintf("should replace `%s` with `%s`", oldExpr, newExpr),
+				TextEdits: []analysis.TextEdit{
+					{
+						Pos:     tok.Pos(),
+						End:     tok.End(),
+						NewText: []byte(newExpr),
 					},
 				},
 			},
-		})
+		},
 	})
-	return nil, nil
+}
+
+func makeExpr(expr *ast.SelectorExpr) (string, string, ast.Node) {
+	var oldExpr, newExpr string
+
+loop:
+	for {
+		switch x := expr.X.(type) {
+		case *ast.Ident:
+			if oldExpr != "" {
+				break loop
+			}
+
+			oldExpr = fmt.Sprintf("%s.%s", x.Name, expr.Sel.Name)
+			newExpr = fmt.Sprintf("%s.Get%s()", x.Name, expr.Sel.Name)
+			break loop
+
+		case *ast.SelectorExpr:
+			oldExpr, newExpr, _ = makeExpr(x)
+
+			if oldExpr == "" {
+				oldExpr = fmt.Sprint(x)
+				newExpr = fmt.Sprint(x)
+			}
+
+			oldExpr = fmt.Sprintf("%s.%s", oldExpr, expr.Sel.Name)
+			newExpr = fmt.Sprintf("%s.Get%s()", newExpr, expr.Sel.Name)
+
+			vv, ok := x.X.(*ast.SelectorExpr)
+			if !ok {
+				break loop
+			}
+			expr = vv
+
+		default:
+			fmt.Printf("Not implemented for type: %s\n", reflect.TypeOf(x))
+			break loop
+		}
+	}
+
+	return oldExpr, newExpr, expr
 }
 
 const messageState = "google.golang.org/protobuf/internal/impl.MessageState"
