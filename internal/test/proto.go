@@ -21,6 +21,7 @@ func somefunc(t *pb.Test) interface{} {
 	_, _, t.T = true, true, false
 	t.T, _ = true, true
 	t.D = 2
+	t.Embedded.S = "42"
 	fmt.Println(
 		t.B, t.D,
 		t.F,
@@ -31,6 +32,8 @@ func somefunc(t *pb.Test) interface{} {
 		t.U32,
 		t.U64,
 		t.Embedded,
+		t.Embedded.S,
+		t.GetEmbedded().S,
 	)
 	return t.B
 }
