@@ -29,12 +29,14 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			(*ast.CallExpr)(nil),
 		}
 		ignores = map[token.Pos]struct{}{}
+		lastPos token.Pos
 	)
 
-	var lastPos token.Pos
 	spector.Preorder(nodeFilter, func(n ast.Node) {
-		var oldExpr, newExpr string
-		var pos, end token.Pos
+		var (
+			oldExpr, newExpr string
+			pos, end         token.Pos
+		)
 
 		switch x := n.(type) {
 		case *ast.AssignStmt:
@@ -43,19 +45,24 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			}
 
 		case *ast.CallExpr:
-			switch f := x.Fun.(type) {
-			case *ast.SelectorExpr:
-				if !isProtoMessage(pass, f.X) {
-					return
+			f, ok := x.Fun.(*ast.SelectorExpr)
+			if !ok || !isProtoMessage(pass, f.X) {
+				for _, arg := range x.Args {
+					var a *ast.UnaryExpr
+					a, ok = arg.(*ast.UnaryExpr)
+					if !ok || a.Op != token.AND {
+						continue
+					}
+
+					ignores[a.X.Pos()] = struct{}{}
 				}
 
-				oldExpr, newExpr, pos, end = makeFromCallAndSelectorExpr(x)
-				if oldExpr == "" || newExpr == "" {
-					ignores[x.Pos()] = struct{}{}
-					return
-				}
+				ignores[x.Pos()] = struct{}{}
+				return
+			}
 
-			default:
+			oldExpr, newExpr, pos, end = makeFromCallAndSelectorExpr(x)
+			if oldExpr == "" || newExpr == "" {
 				ignores[x.Pos()] = struct{}{}
 				return
 			}

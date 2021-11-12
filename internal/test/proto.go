@@ -23,6 +23,8 @@ func somefunc(t *pb.Test) interface{} {
 	t.D = 2
 	t.Embedded.S = "42"
 
+	println(&t.S, &t.B, t.T)
+
 	var many []*pb.Test
 	manyIndex := 42
 
