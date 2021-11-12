@@ -22,6 +22,9 @@ func somefunc(t *pb.Test) interface{} {
 	t.T, _ = true, true
 	t.D = 2
 	t.Embedded.S = "42"
+
+	var many []*pb.Test
+
 	fmt.Println(
 		t.B, t.D,
 		t.F,
@@ -41,6 +44,11 @@ func somefunc(t *pb.Test) interface{} {
 		t.GetEmbedded().GetEmbedded().S,
 		t.GetEmbedded().GetEmbedded().Embedded.S,
 		t.GetEmbedded().GetEmbedded().GetEmbedded().S,
+		many[0].T,
+		many[0].Embedded.S,
+		many[0].GetEmbedded().S,
+		many[0].GetEmbedded().Embedded.S,
+		many[0].GetEmbedded().Embedded.Embedded.S,
 	)
 	return t.B
 }
