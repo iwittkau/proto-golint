@@ -33,28 +33,54 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 	var lastPos token.Pos
 	spector.Preorder(nodeFilter, func(n ast.Node) {
-		if assign, ok := n.(*ast.AssignStmt); ok {
-			for _, lhs := range assign.Lhs {
+		var oldExpr, newExpr string
+		var pos, end token.Pos
+
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range x.Lhs {
 				ignores[lhs.Pos()] = struct{}{}
 			}
+
+		case *ast.CallExpr:
+			switch f := x.Fun.(type) {
+			case *ast.SelectorExpr:
+				if !isProtoMessage(pass, f.X) {
+					return
+				}
+
+				oldExpr, newExpr, pos, end = makeFromCallAndSelectorExpr(x)
+				if oldExpr == "" || newExpr == "" {
+					ignores[x.Pos()] = struct{}{}
+					return
+				}
+
+			default:
+				_ = f
+				ignores[x.Pos()] = struct{}{}
+				return
+			}
+
+		case *ast.SelectorExpr:
+			if !isProtoMessage(pass, x.X) {
+				return
+			}
+
+			oldExpr, newExpr, pos, end = makeFromSelectorExpr(x)
 		}
-		if call, ok := n.(*ast.CallExpr); ok {
-			ignores[call.Pos()] = struct{}{}
-			return
-		}
+
 		if _, ok := ignores[n.Pos()]; ok {
 			return
 		}
-		be := n.(*ast.SelectorExpr)
-		if !isProtoMessage(pass, be.X) {
-			return
-		}
 
-		oldExpr, newExpr, pos, end := makeExpr(be)
 		if oldExpr == "" || newExpr == "" || lastPos == pos {
 			return
 		}
 		lastPos = pos
+
+		if oldExpr == newExpr {
+			return
+		}
 
 		pass.Report(analysis.Diagnostic{
 			Pos:     pos,
@@ -77,67 +103,153 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-func makeExpr(expr *ast.SelectorExpr) (oldExpr, newExpr string, pos, end token.Pos) {
+func makeFromCallAndSelectorExpr(expr *ast.CallExpr) (oldExpr, newExpr string, pos, end token.Pos) {
 	pos = expr.Pos()
 	end = expr.End()
 
-loop:
-	for {
-		var end2 token.Pos
-
-		switch x := expr.X.(type) {
-		case *ast.Ident:
-			if oldExpr != "" {
-				break loop
-			}
-
-			oldExpr = fmt.Sprintf("%s.%s", x.Name, expr.Sel.Name)
-			newExpr = fmt.Sprintf("%s.Get%s()", x.Name, expr.Sel.Name)
-			break loop
-
-		case *ast.SelectorExpr:
-			oldExpr, newExpr, _, end2 = makeExpr(x)
-			if end2 > end {
-				end = end2
-			}
-
-			if oldExpr == "" {
-				oldExpr = fmt.Sprint(x)
-				newExpr = fmt.Sprint(x)
-			}
-
-			oldExpr = fmt.Sprintf("%s.%s", oldExpr, expr.Sel.Name)
-			newExpr = fmt.Sprintf("%s.Get%s()", newExpr, expr.Sel.Name)
-
-			vv, ok := x.X.(*ast.SelectorExpr)
-			if !ok {
-				break loop
-			}
-			expr = vv
-
-		case *ast.CallExpr:
-			v, ok := x.Fun.(*ast.SelectorExpr)
-			if ok {
-				oldExpr, newExpr, _, end2 = makeExpr(v)
-				if end2 > end {
-					end = end2
-				}
-
-				oldExpr = strings.ReplaceAll(oldExpr, "GetGet", "Get")
-				newExpr = strings.ReplaceAll(newExpr, "GetGet", "Get")
-			}
-
-			oldExpr = fmt.Sprintf("%s.%s", oldExpr, expr.Sel.Name)
-			newExpr = fmt.Sprintf("%s.Get%s()", newExpr, expr.Sel.Name)
-			break loop
-
-		default:
-			fmt.Printf("Not implemented for type: %s\n", reflect.TypeOf(x))
-			break loop
+	switch f := expr.Fun.(type) {
+	case *ast.SelectorExpr:
+		oldExpr, newExpr = handleExpr(nil, f.X)
+		if oldExpr == "" || newExpr == "" {
+			return "", "", 0, 0
 		}
+
+		oldExpr = fmt.Sprintf("%s.%s()", oldExpr, f.Sel.Name)
+		newExpr = fmt.Sprintf("%s.%s()", newExpr, f.Sel.Name)
+
+	default:
+		fmt.Printf("makeFromCallExpr: not implemented for type: %s\n", reflect.TypeOf(f))
 	}
 
 	return oldExpr, newExpr, pos, end
+}
+
+func makeFromSelectorExpr(expr *ast.SelectorExpr) (oldExpr, newExpr string, pos, end token.Pos) {
+	pos = expr.Pos()
+	end = expr.End()
+
+	oldExpr, newExpr = handleExpr(expr, expr.X)
+	return oldExpr, newExpr, pos, end
+}
+
+func handleExpr(base, child ast.Expr) (newExpr, oldExpr string) {
+	switch c := child.(type) {
+	case *ast.Ident:
+		oldExpr, newExpr = handleIdent(base, c)
+
+	case *ast.SelectorExpr:
+		oldExpr, newExpr = handleSelectorExpr(base, c)
+
+	case *ast.IndexExpr:
+		oldExpr, newExpr = handleIndexExpr(base, c)
+
+	case *ast.CallExpr:
+		oldExpr, newExpr = handleCallExpr(base, c)
+
+	default:
+		fmt.Printf("handleExpr: not implemented for type: %s\n", reflect.TypeOf(c))
+	}
+
+	return oldExpr, newExpr
+
+}
+
+func handleIdent(base ast.Expr, c *ast.Ident) (oldExpr, newExpr string) {
+	if base == nil {
+		return "", ""
+	}
+
+	switch b := base.(type) {
+	case *ast.SelectorExpr:
+		oldExpr = fmt.Sprintf("%s.%s", c.Name, b.Sel.Name)
+		newExpr = fmt.Sprintf("%s.Get%s()", c.Name, b.Sel.Name)
+
+	case *ast.IndexExpr:
+		var index string
+		switch i := b.Index.(type) {
+		case *ast.BasicLit:
+			index = i.Value
+
+		case *ast.Ident:
+			index = i.Name
+
+		default:
+			fmt.Printf("handleIdent: base is IndexExpr: not implemented for type: %s\n", reflect.TypeOf(i))
+		}
+
+		oldExpr = fmt.Sprintf("%s[%s]", c.Name, index)
+		newExpr = fmt.Sprintf("%s[%s]", c.Name, index)
+
+	default:
+		fmt.Printf("handleIdent: not implemented for type: %s\n", reflect.TypeOf(b))
+	}
+
+	return oldExpr, newExpr
+}
+
+func handleSelectorExpr(base ast.Expr, c *ast.SelectorExpr) (oldExpr, newExpr string) {
+	oldExpr, newExpr = handleExpr(c, c.X)
+
+	if base == nil {
+		return oldExpr, newExpr
+	}
+
+	switch b := base.(type) {
+	case *ast.SelectorExpr:
+		oldExpr = fmt.Sprintf("%s.%s", oldExpr, b.Sel.Name)
+		newExpr = fmt.Sprintf("%s.Get%s()", newExpr, b.Sel.Name)
+
+	case *ast.CallExpr:
+		// skip
+
+	default:
+		fmt.Printf("handleSelectorExpr: not implemented for type: %s\n", reflect.TypeOf(b))
+	}
+
+	return oldExpr, newExpr
+}
+
+func handleCallExpr(base ast.Expr, c *ast.CallExpr) (newExpr, oldExpr string) {
+	v, ok := c.Fun.(*ast.SelectorExpr)
+	if ok {
+		oldExpr, newExpr = handleExpr(c, v)
+		oldExpr = strings.ReplaceAll(oldExpr, "GetGet", "Get")
+		newExpr = strings.ReplaceAll(newExpr, "GetGet", "Get")
+	}
+
+	if base == nil {
+		return oldExpr + "()", newExpr
+	}
+
+	switch b := base.(type) {
+	case *ast.SelectorExpr:
+		oldExpr = fmt.Sprintf("%s().%s", oldExpr, b.Sel.Name)
+		newExpr = fmt.Sprintf("%s.Get%s()", newExpr, b.Sel.Name)
+
+	default:
+		fmt.Printf("handleCallExpr: not implemented for type: %s\n", reflect.TypeOf(b))
+	}
+
+	return oldExpr, newExpr
+}
+
+func handleIndexExpr(base ast.Expr, c *ast.IndexExpr) (oldExpr, newExpr string) {
+	oldExpr, newExpr = handleExpr(c, c.X)
+
+	if base == nil {
+		return oldExpr, newExpr
+	}
+
+	switch b := base.(type) {
+	case *ast.SelectorExpr:
+		oldExpr = fmt.Sprintf("%s.%s", oldExpr, b.Sel.Name)
+		newExpr = fmt.Sprintf("%s.Get%s()", newExpr, b.Sel.Name)
+
+	default:
+		fmt.Printf("handleIndexExpr: not implemented for type: %s\n", reflect.TypeOf(b))
+	}
+
+	return oldExpr, newExpr
 }
 
 const messageState = "google.golang.org/protobuf/internal/impl.MessageState"
