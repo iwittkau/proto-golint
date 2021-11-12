@@ -124,7 +124,7 @@ func makeFromCallAndSelectorExpr(expr *ast.CallExpr) (oldExpr, newExpr string, p
 		newExpr = fmt.Sprintf("%s.%s()", newExpr, f.Sel.Name)
 
 	default:
-		fmt.Printf("makeFromCallExpr: not implemented for type: %s\n", reflect.TypeOf(f))
+		fmt.Printf("makeFromCallAndSelectorExpr: not implemented for type: %s\n", reflect.TypeOf(f))
 	}
 
 	return oldExpr, newExpr, pos, end
@@ -206,7 +206,8 @@ func handleSelectorExpr(base ast.Expr, c *ast.SelectorExpr) (oldExpr, newExpr st
 		newExpr = fmt.Sprintf("%s.Get%s()", newExpr, b.Sel.Name)
 
 	case *ast.CallExpr:
-		// skip
+		oldExpr += "()"
+		newExpr = strings.ReplaceAll(newExpr, "GetGet", "Get")
 
 	default:
 		fmt.Printf("handleSelectorExpr: not implemented for type: %s\n", reflect.TypeOf(b))
@@ -216,20 +217,15 @@ func handleSelectorExpr(base ast.Expr, c *ast.SelectorExpr) (oldExpr, newExpr st
 }
 
 func handleCallExpr(base ast.Expr, c *ast.CallExpr) (newExpr, oldExpr string) {
-	v, ok := c.Fun.(*ast.SelectorExpr)
-	if ok {
-		oldExpr, newExpr = handleExpr(c, v)
-		oldExpr = strings.ReplaceAll(oldExpr, "GetGet", "Get")
-		newExpr = strings.ReplaceAll(newExpr, "GetGet", "Get")
-	}
+	oldExpr, newExpr = handleExpr(c, c.Fun)
 
 	if base == nil {
-		return oldExpr + "()", newExpr
+		return oldExpr, newExpr
 	}
 
 	switch b := base.(type) {
 	case *ast.SelectorExpr:
-		oldExpr = fmt.Sprintf("%s().%s", oldExpr, b.Sel.Name)
+		oldExpr = fmt.Sprintf("%s.%s", oldExpr, b.Sel.Name)
 		newExpr = fmt.Sprintf("%s.Get%s()", newExpr, b.Sel.Name)
 
 	default:
