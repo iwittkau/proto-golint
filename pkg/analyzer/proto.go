@@ -56,7 +56,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				}
 
 			default:
-				_ = f
 				ignores[x.Pos()] = struct{}{}
 				return
 			}
