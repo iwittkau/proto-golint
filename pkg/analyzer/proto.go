@@ -29,14 +29,10 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			(*ast.CallExpr)(nil),
 		}
 		ignores = map[token.Pos]struct{}{}
-		lastPos token.Pos
 	)
 
 	spector.Preorder(nodeFilter, func(n ast.Node) {
-		var (
-			oldExpr, newExpr string
-			pos, end         token.Pos
-		)
+		var oldExpr, newExpr string
 
 		switch x := n.(type) {
 		case *ast.AssignStmt:
@@ -61,7 +57,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				return
 			}
 
-			oldExpr, newExpr, pos, end = makeFromCallAndSelectorExpr(x)
+			oldExpr, newExpr = makeFromCallAndSelectorExpr(x)
 			if oldExpr == "" || newExpr == "" {
 				ignores[x.Pos()] = struct{}{}
 				return
@@ -72,33 +68,33 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				return
 			}
 
-			oldExpr, newExpr, pos, end = makeFromSelectorExpr(x)
+			oldExpr, newExpr = handleExpr(x, x.X)
 		}
 
 		if _, ok := ignores[n.Pos()]; ok {
 			return
 		}
 
-		if oldExpr == "" || newExpr == "" || lastPos == pos {
+		if oldExpr == "" || newExpr == "" {
 			return
 		}
-		lastPos = pos
+		ignores[n.Pos()] = struct{}{}
 
 		if oldExpr == newExpr {
 			return
 		}
 
 		pass.Report(analysis.Diagnostic{
-			Pos:     pos,
-			End:     end,
+			Pos:     n.Pos(),
+			End:     n.End(),
 			Message: fmt.Sprintf(`proto message field read without getter: %q should be %q`, oldExpr, newExpr),
 			SuggestedFixes: []analysis.SuggestedFix{
 				{
 					Message: fmt.Sprintf("should replace %q with %q", oldExpr, newExpr),
 					TextEdits: []analysis.TextEdit{
 						{
-							Pos:     pos,
-							End:     end,
+							Pos:     n.Pos(),
+							End:     n.End(),
 							NewText: []byte(newExpr),
 						},
 					},
@@ -109,15 +105,12 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-func makeFromCallAndSelectorExpr(expr *ast.CallExpr) (oldExpr, newExpr string, pos, end token.Pos) {
-	pos = expr.Pos()
-	end = expr.End()
-
+func makeFromCallAndSelectorExpr(expr *ast.CallExpr) (oldExpr, newExpr string) {
 	switch f := expr.Fun.(type) {
 	case *ast.SelectorExpr:
 		oldExpr, newExpr = handleExpr(nil, f.X)
 		if oldExpr == "" || newExpr == "" {
-			return "", "", 0, 0
+			return "", ""
 		}
 
 		oldExpr = fmt.Sprintf("%s.%s()", oldExpr, f.Sel.Name)
@@ -127,15 +120,7 @@ func makeFromCallAndSelectorExpr(expr *ast.CallExpr) (oldExpr, newExpr string, p
 		fmt.Printf("makeFromCallAndSelectorExpr: not implemented for type: %s\n", reflect.TypeOf(f))
 	}
 
-	return oldExpr, newExpr, pos, end
-}
-
-func makeFromSelectorExpr(expr *ast.SelectorExpr) (oldExpr, newExpr string, pos, end token.Pos) {
-	pos = expr.Pos()
-	end = expr.End()
-
-	oldExpr, newExpr = handleExpr(expr, expr.X)
-	return oldExpr, newExpr, pos, end
+	return oldExpr, newExpr
 }
 
 func handleExpr(base, child ast.Expr) (newExpr, oldExpr string) {
