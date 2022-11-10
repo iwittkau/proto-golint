@@ -35,4 +35,4 @@ lint:
 
 .PHONY: install-golangci-lint
 install-golangci-lint:
-	cd ${HOME} && CGO_ENABLED=1 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	CGO_ENABLED=1 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
