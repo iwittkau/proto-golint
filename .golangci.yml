@@ -84,14 +84,12 @@ linters:
     - gocyclo
     - gofmt
     - goimports
-    - golint
     - gomnd
     - goprintffuncname
     - gosec
     - gosimple
     - govet
     - ineffassign
-    - interfacer
     - lll
     - misspell
     - nakedret
@@ -99,15 +97,12 @@ linters:
     - nolintlint
     - proto-golint
     - rowserrcheck
-    - scopelint
     - staticcheck
-    - structcheck
     - stylecheck
     - typecheck
     - unconvert
     - unparam
     - unused
-    - varcheck
     - whitespace
 
   # don't enable:
